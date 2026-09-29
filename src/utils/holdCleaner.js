@@ -4,11 +4,13 @@ const cleanExpiredHolds = async () => {
   try {
     const now = new Date();
     const result = await Appointment.deleteMany({
-      status: 'HELD',
-      holdExpiresAt: { $lt: now }
+      $or: [
+        { status: 'HELD', holdExpiresAt: { $lt: now } },
+        { status: 'CANCELLED' }
+      ]
     });
     if (result.deletedCount > 0) {
-      console.log(`[HoldCleaner] Released ${result.deletedCount} expired serial holds.`);
+      console.log(`[HoldCleaner] Released ${result.deletedCount} expired/cancelled serial holds.`);
     }
   } catch (error) {
     console.error(`[HoldCleaner Error] ${error.message}`);

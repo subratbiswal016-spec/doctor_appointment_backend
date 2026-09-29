@@ -60,21 +60,23 @@ exports.getDoctors = async (req, res) => {
 
     let doctors = await Doctor.find(query).sort({ rating: -1 });
 
-    // If coordinates were sent, calculate distanceKm and filter nearby doctors
+    // If coordinates were sent, calculate distanceKm and optionally filter nearby
     const hasCoords = lat !== undefined && lng !== undefined && lat !== '' && lng !== '';
     if (hasCoords) {
       const uLat = parseFloat(lat);
       const uLng = parseFloat(lng);
       if (!isNaN(uLat) && !isNaN(uLng)) {
         doctors = doctors.map((d) => {
-          const obj = d.toObject();
-          obj.distanceKm = Math.round(distKm(uLat, uLng, d.latitude, d.longitude) * 10) / 10;
+          const obj = d.toObject ? d.toObject() : d;
+          obj.distanceKm = Math.round(distKm(uLat, uLng, obj.latitude, obj.longitude) * 10) / 10;
           return obj;
         });
 
-        // If coordinates are specified and no search text, filter out doctors farther than 60km
+        // Only apply 60km distance filter when no explicit city is selected
         if (!search || search.trim().length === 0) {
-          doctors = doctors.filter((d) => (d.distanceKm ?? 0) <= 60);
+          if (!city || city === 'All') {
+            doctors = doctors.filter((d) => (d.distanceKm ?? 0) <= 60);
+          }
           doctors.sort((a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9));
         }
       }
@@ -402,9 +404,69 @@ exports.deleteSession = async (req, res) => {
 exports.getSpecialities = async (req, res) => {
   try {
     const dbSpecialities = await Doctor.distinct('speciality', { isVerified: { $ne: false } });
-    const defaultList = ['Cardiologist', 'Dermatologist', 'General Physician', 'Pediatrician', 'Neurologist', 'Orthopedic', 'Gynecologist', 'ENT', 'Dentist'];
+    const defaultList = [
+      'General Physician', 'Cardiologist', 'Dermatologist', 'Pediatrician',
+      'Neurologist', 'Orthopedic', 'Gynecologist', 'ENT', 'Dentist',
+      'Psychiatrist', 'Urologist', 'Oncologist', 'Ophthalmologist',
+      'Pulmonologist', 'Gastroenterologist', 'Nephrologist', 'Endocrinologist',
+      'Rheumatologist', 'Hematologist', 'Plastic Surgeon', 'General Surgeon',
+      'Neurosurgeon', 'Cardiac Surgeon', 'Anesthesiologist', 'Radiologist',
+      'Pathologist', 'Physiotherapist', 'Ayurvedic', 'Homeopathic',
+      'Sexologist', 'Allergist', 'Diabetologist', 'Neonatologist',
+      'Geriatrician', 'Sports Medicine', 'Emergency Medicine',
+    ];
     const merged = Array.from(new Set([...defaultList, ...dbSpecialities]));
     return res.status(200).json({ success: true, specialities: ['All', ...merged] });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin: Delete a single doctor and all related data
+exports.deleteDoctor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const doctor = await Doctor.findById(id);
+    if (!doctor) {
+      return res.status(404).json({ success: false, message: 'Doctor not found' });
+    }
+
+    const sessions = await Session.find({ doctorId: id });
+    const sessionIds = sessions.map(s => s._id);
+
+    await Appointment.deleteMany({ sessionId: { $in: sessionIds } });
+    await Session.deleteMany({ doctorId: id });
+    await User.updateMany({ doctorId: id }, { $set: { doctorId: null, role: 'PATIENT' } });
+    await Doctor.findByIdAndDelete(id);
+
+    return res.status(200).json({ success: true, message: `Doctor "${doctor.name}" and all related data deleted` });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin: Delete a single user
+exports.deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.doctorId) {
+      const sessions = await Session.find({ doctorId: user.doctorId });
+      const sessionIds = sessions.map(s => s._id);
+      await Appointment.deleteMany({ sessionId: { $in: sessionIds } });
+      await Session.deleteMany({ doctorId: user.doctorId });
+      await Doctor.findByIdAndDelete(user.doctorId);
+    }
+
+    await Appointment.deleteMany({ patientId: user._id });
+    await Patient.findOneAndDelete({ phone: user.phone });
+    await User.findByIdAndDelete(id);
+
+    return res.status(200).json({ success: true, message: `User "${user.name || user.phone}" deleted` });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -471,14 +533,83 @@ exports.getAdminStats = async (req, res) => {
   }
 };
 
-// Admin: Get all appointments (master list)
+// Admin: Update a booking (status, patient info, amount)
+exports.updateAppointment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = {};
+    const allowed = ['status', 'patientName', 'patientAge', 'patientGender', 'patientPhone', 'amount'];
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+    const appointment = await Appointment.findByIdAndUpdate(id, updates, { new: true })
+      .populate('doctorId').populate('sessionId');
+    if (!appointment) {
+      return res.status(404).json({ success: false, message: 'Appointment not found' });
+    }
+    return res.status(200).json({ success: true, appointment });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin: Delete a booking
+exports.deleteAppointment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const appt = await Appointment.findByIdAndDelete(id);
+    if (!appt) {
+      return res.status(404).json({ success: false, message: 'Appointment not found' });
+    }
+    return res.status(200).json({ success: true, message: `Booking #${appt.serialNumber} deleted` });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin: Update a user's details
+exports.adminUpdateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = {};
+    const allowed = ['name', 'age', 'gender', 'role', 'phone'];
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+    const user = await User.findByIdAndUpdate(id, updates, { new: true });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    return res.status(200).json({ success: true, user });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin: Get all appointments (master list) with optional date filter
 exports.getAllAppointments = async (req, res) => {
   try {
-    const appointments = await Appointment.find({ status: { $ne: 'HELD' } })
+    const { date, status } = req.query;
+    const filter = { status: { $ne: 'HELD' } };
+    if (status && status !== 'ALL') {
+      filter.status = status;
+    }
+
+    let query = Appointment.find(filter)
       .populate('doctorId')
       .populate('sessionId')
       .sort({ createdAt: -1 })
-      .limit(100);
+      .limit(200);
+
+    let appointments = await query;
+
+    if (date) {
+      appointments = appointments.filter(a => {
+        const sess = a.sessionId;
+        if (sess && sess.date) return sess.date === date;
+        return new Date(a.createdAt).toISOString().split('T')[0] === date;
+      });
+    }
 
     return res.status(200).json({ success: true, count: appointments.length, appointments });
   } catch (error) {
@@ -513,6 +644,7 @@ exports.getDoctorDashboardStats = async (req, res) => {
       status: { $in: ['CONFIRMED', 'ARRIVED', 'COMPLETED'] }
     });
     const totalPatients = allDoctorAppts.length;
+    const totalRevenue = allDoctorAppts.reduce((acc, a) => acc + (a.amount || 0), 0);
     const doctorProfile = await Doctor.findById(doctorId);
 
     return res.status(200).json({
@@ -530,7 +662,12 @@ exports.getDoctorDashboardStats = async (req, res) => {
         registrationNumber: doctorProfile.registrationNumber,
         experienceYears: doctorProfile.experienceYears,
         rating: doctorProfile.rating,
-        reviewsCount: doctorProfile.reviewsCount
+        reviewsCount: doctorProfile.reviewsCount,
+        latitude: doctorProfile.latitude,
+        longitude: doctorProfile.longitude,
+        about: doctorProfile.about,
+        email: doctorProfile.email,
+        languages: doctorProfile.languages
       } : null,
       stats: {
         todayBooked,

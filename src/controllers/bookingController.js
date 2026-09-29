@@ -23,6 +23,23 @@ exports.reserveSerial = async (req, res) => {
     const holdDurationMinutes = parseInt(process.env.HOLD_DURATION_MINUTES || '10');
     const holdExpiresAt = new Date(now.getTime() + holdDurationMinutes * 60 * 1000);
 
+    // Step 0: Check if patient already has an active booking in this session
+    const existingPatientBooking = await Appointment.findOne({
+      sessionId,
+      patientId,
+      $or: [
+        { status: { $in: ['CONFIRMED', 'ARRIVED', 'COMPLETED'] } },
+        { status: 'HELD', holdExpiresAt: { $gt: now } }
+      ]
+    });
+
+    if (existingPatientBooking) {
+      return res.status(409).json({
+        success: false,
+        message: `You already have Serial #${existingPatientBooking.serialNumber} booked for this session.`
+      });
+    }
+
     // Step 1: Check if this serial is currently booked or held by someone else
     const existingLock = await Appointment.findOne({
       sessionId,
@@ -40,12 +57,14 @@ exports.reserveSerial = async (req, res) => {
       });
     }
 
-    // Step 2: Clean up any old expired holds for this exact serial
+    // Step 2: Clean up expired holds and cancelled appointments for this serial
     await Appointment.deleteMany({
       sessionId,
       serialNumber,
-      status: 'HELD',
-      holdExpiresAt: { $lte: now }
+      $or: [
+        { status: 'HELD', holdExpiresAt: { $lte: now } },
+        { status: 'CANCELLED' }
+      ]
     });
 
     // Step 3: Atomic insertion into MongoDB (Unique index on sessionId + serialNumber enforces concurrency)

@@ -15,6 +15,23 @@ exports.verifyPayment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Appointment record not found' });
     }
 
+    if (appointment.status !== 'HELD') {
+      return res.status(400).json({
+        success: false,
+        message: appointment.status === 'CONFIRMED'
+          ? 'This booking is already confirmed.'
+          : `Cannot confirm — booking status is ${appointment.status}.`
+      });
+    }
+
+    if (new Date() > new Date(appointment.holdExpiresAt)) {
+      await appointment.deleteOne();
+      return res.status(410).json({
+        success: false,
+        message: 'Your hold has expired. Please select a new serial token.'
+      });
+    }
+
     const finalPaymentId = paymentId || `pay_${Date.now()}_${appointment.serialNumber}`;
 
     // Step 1: Transition Appointment Status HELD -> CONFIRMED

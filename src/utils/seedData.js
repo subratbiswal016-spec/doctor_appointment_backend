@@ -51,7 +51,7 @@ const sampleDoctors = [
   {
     _id: '66ce22222222222222222222',
     name: 'Dr. Priya Patel',
-    photo: 'https://images.unsplash.com/photo-1594824813566-78a01170461c?auto=format&fit=crop&w=400&q=80',
+    photo: 'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&w=400&q=80',
     qualification: 'MBBS, DVD (Dermatology)',
     speciality: 'Dermatologist',
     experienceYears: 11,
@@ -204,7 +204,7 @@ const sampleDoctors = [
   {
     _id: '66cf00000000000000000004',
     name: 'Dr. Kavya Iyer',
-    photo: 'https://images.unsplash.com/photo-1594824813566-78a01170461c?auto=format&fit=crop&w=400&q=80',
+    photo: 'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?auto=format&fit=crop&w=400&q=80',
     qualification: 'MBBS, MD (Dermatology)',
     speciality: 'Dermatologist',
     experienceYears: 10,
