@@ -8,9 +8,7 @@ const protect = (req, res, next) => {
   }
 
   if (!token) {
-    // For easy testing in development/demo mode, attach default patient user if no token provided
-    req.user = { id: '66ce11111111111111111111', phone: '+919876543210', name: 'Demo Patient' };
-    return next();
+    return res.status(401).json({ success: false, message: 'Not authorized, no token' });
   }
 
   try {
@@ -21,8 +19,7 @@ const protect = (req, res, next) => {
     req.user = decoded;
     next();
   } catch (error) {
-    req.user = { id: '66ce11111111111111111111', phone: '+919876543210', name: 'Demo Patient' };
-    next();
+    return res.status(401).json({ success: false, message: 'Not authorized, token invalid' });
   }
 };
 

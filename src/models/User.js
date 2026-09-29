@@ -6,6 +6,7 @@ const userSchema = new mongoose.Schema({
   age: { type: Number, default: 0 },
   gender: { type: String, enum: ['Male', 'Female', 'Other', 'Unspecified'], default: 'Unspecified' },
   avatarUrl: { type: String, default: '' },
+  password: { type: String, default: null },
   role: {
     type: String,
     enum: ['PATIENT', 'DOCTOR', 'ADMIN'],

@@ -20,15 +20,6 @@ exports.getDoctors = async (req, res) => {
   try {
     const { search, speciality, city, lat, lng } = req.query;
 
-    // Auto seed initial doctors ONLY if explicitly requested in ENV (default false)
-    if (process.env.ENABLE_AUTO_SEED === 'true') {
-      const docCount = await Doctor.countDocuments();
-      if (docCount === 0) {
-        const { seedInitialData } = require('../utils/seedData');
-        await seedInitialData();
-      }
-    }
-
     let query = { isVerified: { $ne: false } };
 
     // Explicit City Filter
@@ -414,6 +405,28 @@ exports.getSpecialities = async (req, res) => {
     const defaultList = ['Cardiologist', 'Dermatologist', 'General Physician', 'Pediatrician', 'Neurologist', 'Orthopedic', 'Gynecologist', 'ENT', 'Dentist'];
     const merged = Array.from(new Set([...defaultList, ...dbSpecialities]));
     return res.status(200).json({ success: true, specialities: ['All', ...merged] });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Admin: Reset all data (wipe doctors, sessions, appointments)
+exports.resetAllData = async (req, res) => {
+  try {
+    const delDoctors = await Doctor.deleteMany({});
+    const delSessions = await Session.deleteMany({});
+    const delAppointments = await Appointment.deleteMany({});
+    const delPatients = await Patient.deleteMany({});
+    return res.status(200).json({
+      success: true,
+      message: 'All data cleared',
+      deleted: {
+        doctors: delDoctors.deletedCount,
+        sessions: delSessions.deletedCount,
+        appointments: delAppointments.deletedCount,
+        patients: delPatients.deletedCount
+      }
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

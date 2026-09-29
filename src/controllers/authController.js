@@ -2,21 +2,27 @@ const User = require('../models/User');
 const Patient = require('../models/Patient');
 const Doctor = require('../models/Doctor');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'serial_doctor_jwt_secret_key_2026_super_secure';
 
-// Send OTP (Demo OTP = 123456)
+// Send OTP — also tells the client whether this user already has a password
 exports.sendOtp = async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone) {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
     }
-    console.log(`[Auth] OTP requested for phone: ${phone}. Demo OTP: 123456`);
+
+    const existingUser = await User.findOne({ phone });
+    const hasPassword = !!(existingUser && existingUser.password);
+
+    // TODO: integrate real SMS provider (e.g. Twilio, MSG91)
+    console.log(`[Auth] OTP requested for phone: ${phone}, hasPassword: ${hasPassword}`);
     return res.status(200).json({
       success: true,
-      message: 'OTP sent successfully. Use demo OTP: 123456',
-      demoOtp: '123456'
+      message: hasPassword ? 'User has a password, login with password' : 'OTP sent successfully',
+      hasPassword
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -32,7 +38,7 @@ exports.verifyOtp = async (req, res) => {
     }
 
     if (otp !== '123456' && otp !== '000000') {
-      return res.status(400).json({ success: false, message: 'Invalid OTP. Please enter 123456' });
+      return res.status(400).json({ success: false, message: 'Invalid OTP' });
     }
 
     const loginRole = (role || 'PATIENT').toUpperCase();
@@ -182,49 +188,80 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-// Quick Demo Login (no OTP required)
-exports.demoLogin = async (req, res) => {
+// Get User Profile
+exports.getProfile = async (req, res) => {
   try {
-    const { role } = req.body;
-    const loginRole = (role || 'PATIENT').toUpperCase();
-
-    let demoPhone, demoName;
-    if (loginRole === 'ADMIN') {
-      demoPhone = '9999000001';
-      demoName = 'Admin User';
-    } else if (loginRole === 'DOCTOR') {
-      demoPhone = '9999000002';
-      demoName = 'Dr. Demo';
-    } else {
-      demoPhone = '9876543210';
-      demoName = 'Patient Demo';
-    }
-
-    let user = await User.findOne({ phone: demoPhone });
-    if (!user) {
-      user = await User.create({ phone: demoPhone, name: demoName, role: loginRole, profileComplete: true });
-    } else {
-      user.role = loginRole;
-      await user.save();
-    }
-
-    let patient = await Patient.findOne({ phone: demoPhone });
+    const patient = await Patient.findById(req.user.id);
     if (!patient) {
-      patient = await Patient.create({ phone: demoPhone, name: demoName, age: 30, gender: 'Male' });
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    return res.status(200).json({ success: true, patient });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Set password (called after first OTP login)
+exports.setPassword = async (req, res) => {
+  try {
+    const { phone, password } = req.body;
+    if (!phone || !password) {
+      return res.status(400).json({ success: false, message: 'Phone and password are required' });
+    }
+    if (password.length < 4) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 4 characters' });
+    }
+
+    const user = await User.findOne({ phone });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found. Verify OTP first.' });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+    user.password = hashed;
+    await user.save();
+
+    return res.status(200).json({ success: true, message: 'Password set successfully' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Login with password (returning users)
+exports.loginWithPassword = async (req, res) => {
+  try {
+    const { phone, password, role } = req.body;
+    if (!phone || !password) {
+      return res.status(400).json({ success: false, message: 'Phone and password are required' });
+    }
+
+    const user = await User.findOne({ phone });
+    if (!user || !user.password) {
+      return res.status(400).json({ success: false, message: 'No account found. Please register with OTP first.' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: 'Incorrect password' });
+    }
+
+    const loginRole = (role || user.role || 'PATIENT').toUpperCase();
+    user.role = loginRole;
+    await user.save();
+
+    let patient = await Patient.findOne({ phone });
+    if (!patient) {
+      patient = await Patient.create({
+        phone,
+        name: user.name || 'Patient',
+        age: user.age || 28,
+        gender: user.gender || 'Male'
+      });
     }
 
     let doctorProfile = null;
-    if (loginRole === 'DOCTOR') {
-      if (user.doctorId) {
-        doctorProfile = await Doctor.findById(user.doctorId);
-      }
-      if (!doctorProfile) {
-        doctorProfile = await Doctor.findOne({ isVerified: true });
-        if (doctorProfile) {
-          user.doctorId = doctorProfile._id;
-          await user.save();
-        }
-      }
+    if (loginRole === 'DOCTOR' && user.doctorId) {
+      doctorProfile = await Doctor.findById(user.doctorId);
     }
 
     const token = jwt.sign(
@@ -238,7 +275,7 @@ exports.demoLogin = async (req, res) => {
       token,
       role: loginRole,
       isNewUser: false,
-      profileComplete: true,
+      profileComplete: user.profileComplete || false,
       user: {
         id: user._id,
         patientId: patient._id,
@@ -248,23 +285,10 @@ exports.demoLogin = async (req, res) => {
         gender: user.gender,
         role: loginRole,
         doctorId: user.doctorId,
-        profileComplete: true
+        profileComplete: user.profileComplete || false
       },
       doctorProfile
     });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// Get User Profile
-exports.getProfile = async (req, res) => {
-  try {
-    const patient = await Patient.findById(req.user.id);
-    if (!patient) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-    return res.status(200).json({ success: true, patient });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

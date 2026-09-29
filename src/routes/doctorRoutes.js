@@ -13,7 +13,8 @@ const {
   getDoctorDashboardStats,
   generateAvailability,
   updateDoctor,
-  deleteSession
+  deleteSession,
+  resetAllData
 } = require('../controllers/doctorController');
 
 router.get('/', getDoctors);
@@ -26,6 +27,7 @@ router.get('/:id', getDoctorById);
 router.get('/:doctorId/sessions', getDoctorSessions);
 router.post('/admin/create', createDoctor);
 router.post('/admin/session', createSession);
+router.delete('/admin/reset', resetAllData);
 
 // Doctor self-service: availability, profile update, remove a day
 router.post('/:doctorId/availability', generateAvailability);

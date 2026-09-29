@@ -21,13 +21,6 @@ exports.getNearbyHospitals = async (req, res) => {
   try {
     const { lat, lng, search } = req.query;
 
-    // Auto-seed if empty (same behaviour as the doctor list)
-    const docCount = await Doctor.countDocuments();
-    if (docCount === 0) {
-      const { seedInitialData } = require('../utils/seedData');
-      await seedInitialData();
-    }
-
     let query = { isVerified: { $ne: false } };
     if (search) {
       query.$or = [
