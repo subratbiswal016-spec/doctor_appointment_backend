@@ -97,8 +97,11 @@ exports.getNearbyHospitals = async (req, res) => {
       };
     });
 
-    // Sort: nearest first if we have coordinates, otherwise by rating
+    // Sort: nearest first if we have coordinates (and filter > 60km), otherwise by rating
     if (hasCoords && !isNaN(userLat) && !isNaN(userLng)) {
+      if (!search || search.trim().length === 0) {
+        hospitals = hospitals.filter((h) => (h.distanceKm ?? 0) <= 60);
+      }
       hospitals.sort((a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9));
     } else {
       hospitals.sort((a, b) => b.avgRating - a.avgRating);

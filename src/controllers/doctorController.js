@@ -15,36 +15,61 @@ function distKm(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Get all doctors with optional search query (and optional nearby sorting)
+// Get all doctors with optional search query, city filter, and nearby sorting
 exports.getDoctors = async (req, res) => {
   try {
-    const { search, speciality, lat, lng } = req.query;
+    const { search, speciality, city, lat, lng } = req.query;
 
-    // Auto seed initial doctors if database is empty
-    const docCount = await Doctor.countDocuments();
-    if (docCount === 0) {
-      const { seedInitialData } = require('../utils/seedData');
-      await seedInitialData();
+    // Auto seed initial doctors ONLY if explicitly requested in ENV (default false)
+    if (process.env.ENABLE_AUTO_SEED === 'true') {
+      const docCount = await Doctor.countDocuments();
+      if (docCount === 0) {
+        const { seedInitialData } = require('../utils/seedData');
+        await seedInitialData();
+      }
     }
 
     let query = { isVerified: { $ne: false } };
 
-    if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { speciality: { $regex: search, $options: 'i' } },
-        { clinicName: { $regex: search, $options: 'i' } },
-        { city: { $regex: search, $options: 'i' } }
-      ];
+    // Explicit City Filter
+    if (city && city !== 'All') {
+      query.city = { $regex: city.trim(), $options: 'i' };
     }
 
+    // Speciality Filter
     if (speciality && speciality !== 'All') {
-      query.speciality = { $regex: speciality, $options: 'i' };
+      query.speciality = { $regex: speciality.trim(), $options: 'i' };
+    }
+
+    // Search Query (matches name, speciality, clinic, city, address)
+    if (search && search.trim().length > 0) {
+      const term = search.trim();
+      const searchRegex = { $regex: term, $options: 'i' };
+
+      const searchConditions = [
+        { name: searchRegex },
+        { speciality: searchRegex },
+        { clinicName: searchRegex },
+        { city: searchRegex },
+        { address: searchRegex },
+        { about: searchRegex }
+      ];
+
+      if (query.city) {
+        const existingCity = query.city;
+        delete query.city;
+        query.$and = [
+          { city: existingCity },
+          { $or: searchConditions }
+        ];
+      } else {
+        query.$or = searchConditions;
+      }
     }
 
     let doctors = await Doctor.find(query).sort({ rating: -1 });
 
-    // If the caller sent coordinates, attach distance and sort nearest-first
+    // If coordinates were sent, calculate distanceKm and filter nearby doctors
     const hasCoords = lat !== undefined && lng !== undefined && lat !== '' && lng !== '';
     if (hasCoords) {
       const uLat = parseFloat(lat);
@@ -55,7 +80,12 @@ exports.getDoctors = async (req, res) => {
           obj.distanceKm = Math.round(distKm(uLat, uLng, d.latitude, d.longitude) * 10) / 10;
           return obj;
         });
-        doctors.sort((a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9));
+
+        // If coordinates are specified and no search text, filter out doctors farther than 60km
+        if (!search || search.trim().length === 0) {
+          doctors = doctors.filter((d) => (d.distanceKm ?? 0) <= 60);
+          doctors.sort((a, b) => (a.distanceKm ?? 1e9) - (b.distanceKm ?? 1e9));
+        }
       }
     }
 
